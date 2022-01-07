@@ -64,6 +64,6 @@ int main(void)
     tree_create(t, "/b/a/d/");
     free(tree_list(t, "/b/x/"));
     free(tree_list(t, "/b/a/"));
-
+    tree_free(t);
     return 0;
 }

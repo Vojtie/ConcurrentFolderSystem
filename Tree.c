@@ -111,7 +111,7 @@ int tree_remove(Tree *tree, const char *path) {
 
     if (!dest)
         return ENOENT;
-    if (hmap_size(dest->content) > 0)
+    if (hmap_size(dest->content) > 0):
         return ENOTEMPTY;
 
     char component[MAX_FOLDER_NAME_LENGTH + 1];
