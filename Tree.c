@@ -99,31 +99,6 @@ int tree_create(Tree *tree, const char *path) {
     return 0;
 }
 
-//int tree_create(Tree *tree, const char *path) {
-//
-//    if (path && strlen(path) == 1 && *path == '/')
-//        return EEXIST;
-//
-//    HashMapIterator it = hmap_iterator(tree->content);
-//    const char *key;
-//    void *value;
-//    char component[MAX_FOLDER_NAME_LENGTH + 1];
-//    path = split_path(path, component); assert(path);
-//    while (hmap_next(tree->content, &it, &key, &value))
-//        if (!strcmp(component, key))
-//            return tree_create((Tree *) value, path);
-//    // żaden podfolder nie jest taki jak ścieżka
-//    if (*path == '/' && strlen(path) == 1) {
-//        Tree *new = malloc(sizeof(Tree));
-//        new->f_name = malloc(strlen(component) + 1);
-//        strcpy(new->f_name, component);
-//        new->content = hmap_new();
-//        assert(hmap_insert(tree->content, new->f_name, new));
-//        return 0;
-//    } else
-//        return ENOENT;
-//}
-
 int tree_remove(Tree *tree, const char *path) {
 
     if (!is_path_valid(path))
