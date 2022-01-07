@@ -76,6 +76,8 @@ char *tree_list(Tree *tree, const char *path) {
 
 int tree_create(Tree *tree, const char *path) {
 
+    if (strlen(path) == 1 && *path == '/')
+        return EEXIST;
     if (!is_path_valid(path))
         return EINVAL;
 
@@ -111,7 +113,7 @@ int tree_remove(Tree *tree, const char *path) {
 
     if (!dest)
         return ENOENT;
-    if (hmap_size(dest->content) > 0):
+    if (hmap_size(dest->content) > 0)
         return ENOTEMPTY;
 
     char component[MAX_FOLDER_NAME_LENGTH + 1];
@@ -133,6 +135,11 @@ int tree_move(Tree *tree, const char *source, const char *target) {
     Tree *src = find_node(tree, source);
     char trg_component[MAX_FOLDER_NAME_LENGTH + 1];
     char *p_to_trg_par = make_path_to_parent(target, trg_component);
+
+    if (find_node(src, p_to_trg_par)) {
+        free(p_to_trg_par);
+        return -9; // próba przeniesienia source do poddrzewa source
+    }
 
     Tree *trg_par = find_node(tree, p_to_trg_par);
     free(p_to_trg_par);
