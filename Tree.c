@@ -22,7 +22,7 @@ Tree *tree_new() {
     if (!new->f_name)
         exit(1);
 
-    new->f_name = "/";
+    strcpy(new->f_name, "/");
     new->content = hmap_new();
     assert(new->content);
     return new;
@@ -31,7 +31,6 @@ Tree *tree_new() {
 void tree_free(Tree *tree) {
 
     assert(tree);
-    free(tree->f_name);
     HashMapIterator it = hmap_iterator(tree->content);
     const char *key;
     void *value;
@@ -39,6 +38,8 @@ void tree_free(Tree *tree) {
         tree_free(value);
 
     hmap_free(tree->content);
+    free(tree->f_name);
+    free(tree);
 }
 
 Tree *find_node(Tree *tree, const char *path) {
