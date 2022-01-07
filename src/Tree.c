@@ -19,18 +19,18 @@ Tree *tree_new() {
     if (!new)
         exit(1);
 
-    new->f_name = malloc(3);
+    new->f_name = malloc(2);
     if (!new->f_name)
         exit(1);
 
-    new->f_name = "/";
+    strcpy(new->f_name, "/");
     new->content = hmap_new();
     assert(new->content);
     return new;
 }
 
 void tree_free(Tree *tree) {
-    printf("%s\n", tree->f_name);
+
     assert(tree);
     HashMapIterator it = hmap_iterator(tree->content);
     const char *key;
@@ -39,8 +39,7 @@ void tree_free(Tree *tree) {
         tree_free(value);
 
     hmap_free(tree->content);
-    free(tree->content);
-
+    free(tree->f_name);
     free(tree);
 }
 
