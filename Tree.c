@@ -125,16 +125,20 @@ int tree_remove(Tree *tree, const char *path) {
     return 0;
 }
 
-static bool is_parent_to(const char *source, const char *target) {
+static bool is_parent_to(const char *source, const char *poten_child) {
 
-    if (!source || !target)
+    if (!source || !poten_child)
         return false;
-    assert(is_path_valid(source) && is_path_valid(target));
-
+    assert(is_path_valid(source) && is_path_valid(poten_child));
+    char *target = make_path_to_parent(poten_child, NULL);
     while (target) {
-        target = make_path_to_parent(target, NULL);
-        if (target && !strcmp(target, source))
+        if (!strcmp(target, source)) {
+            free(target);
             return true;
+        }
+        char *temp = target;
+        target = make_path_to_parent(target, NULL);
+        free(temp);
     }
     return false;
 }
