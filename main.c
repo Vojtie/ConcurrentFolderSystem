@@ -5,7 +5,7 @@
 #include <string.h>
 #include <sys/types.h>
 #include <unistd.h>
-
+#include "sequential_big_random.h"
 #include "Tree.h"
 
 void print_map(HashMap* map) {
@@ -54,16 +54,17 @@ int main(void)
 //
 //    hmap_free(map);
 
-    Tree *t = tree_new();
-    tree_create(t, "/a/");
-    tree_create(t, "/b/");
-    tree_create(t, "/a/b/");
-    tree_create(t, "/a/b/c/");
-    tree_create(t, "/a/b/d/");
-    tree_create(t, "/b/a/");
-    tree_create(t, "/b/a/d/");
-    free(tree_list(t, "/b/x/"));
-    free(tree_list(t, "/b/a/"));
-    tree_free(t);
+//    Tree *t = tree_new();
+//    tree_create(t, "/a/");
+//    tree_create(t, "/b/");
+//    tree_create(t, "/a/b/");
+//    tree_create(t, "/a/b/c/");
+//    tree_create(t, "/a/b/d/");
+//    tree_create(t, "/b/a/");
+//    tree_create(t, "/b/a/d/");
+//    free(tree_list(t, "/b/x/"));
+//    free(tree_list(t, "/b/a/"));
+//    tree_free(t);
+    sequential_big_random();
     return 0;
 }

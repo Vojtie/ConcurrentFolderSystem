@@ -44,7 +44,10 @@ void tree_free(Tree *tree) {
 
 Tree *find_node(Tree *tree, const char *path) {
 
-    if (path && strlen(path) == 1 && *path == '/')
+    assert(tree);
+    if (!path || !is_path_valid(path))
+        return NULL;
+    if (strlen(path) == 1 && *path == '/')
         return tree;
     if (!strcmp(tree->f_name, path))
         return tree;
@@ -125,27 +128,46 @@ int tree_remove(Tree *tree, const char *path) {
     return 0;
 }
 
+static bool is_parent_to(const char *source, const char *target) {
+
+    if (!source || !target)
+        return false;
+    assert(is_path_valid(source) && is_path_valid(target));
+
+    while (target) {
+        target = make_path_to_parent(target, NULL);
+        if (target && !strcmp(target, source))
+            return true;
+    }
+    return false;
+}
+
 int tree_move(Tree *tree, const char *source, const char *target) {
 
     if (strlen(source) == 1 && *source == '/')
         return EBUSY;
-    if (find_node(tree, target))
+    if (strlen(target) == 1 && *target == '/')
         return EEXIST;
 
     Tree *src = find_node(tree, source);
     char trg_component[MAX_FOLDER_NAME_LENGTH + 1];
     char *p_to_trg_par = make_path_to_parent(target, trg_component);
 
-    if (find_node(src, p_to_trg_par)) {
-        free(p_to_trg_par);
-        return -9; // próba przeniesienia source do poddrzewa source
-    }
-
     Tree *trg_par = find_node(tree, p_to_trg_par);
     free(p_to_trg_par);
 
-    if (!src || !trg_par)
+    if (is_parent_to(source, target))
+        return -9; // TODO opisać błąd
+    if (!src)
         return ENOENT;
+    if (!strcmp(source, target))
+        return 0;
+    if (find_node(tree, target))
+        return EEXIST;
+    if (!trg_par)
+        return ENOENT;
+//    if (!trg_par || !src)
+//        return ENOENT;
 
     char src_component[MAX_FOLDER_NAME_LENGTH + 1];
     char *p_to_src_par = make_path_to_parent(source, src_component);
