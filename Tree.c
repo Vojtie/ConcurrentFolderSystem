@@ -44,10 +44,7 @@ void tree_free(Tree *tree) {
 
 Tree *find_node(Tree *tree, const char *path) {
 
-    assert(tree);
-    if (!path || !is_path_valid(path))
-        return NULL;
-    if (strlen(path) == 1 && *path == '/')
+    if (path && strlen(path) == 1 && *path == '/')
         return tree;
     if (!strcmp(tree->f_name, path))
         return tree;
