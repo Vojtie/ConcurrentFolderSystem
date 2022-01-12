@@ -22,3 +22,6 @@ int tree_create(Tree* tree, const char* path);
 int tree_remove(Tree* tree, const char* path);
 
 int tree_move(Tree* tree, const char* source, const char* target);
+
+//TODO romove
+char *make_path_to_lca(const char *path1, const char *path2);
