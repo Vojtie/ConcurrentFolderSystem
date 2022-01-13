@@ -7,7 +7,7 @@
 #include "HashMap.h"
 #include "path_utils.h"
 #include "err.h"
-
+#include <stdio.h>
 struct Tree {
     //char *f_name; // folder name
     HashMap *content; // zawartość folderu
@@ -28,6 +28,8 @@ static int writer_fp(Tree *tree);
 static Tree *find_child(Tree *tree, const char *path);
 static Tree *find_node_p(Tree *tree, int *res, const char *path, bool is_reader);
 static Tree *find_node(Tree *tree, const char *path);
+static Tree *find_and_lock_dest_h(Tree *tree, const char *dest, bool lock_first, Tree *bound);
+static void update_threads_below_bounded(Tree *tree, Tree *bound);
 
 Tree *tree_new() {
 
@@ -102,6 +104,7 @@ static int reader_pp(Tree *tree) {
     } else if (tree->wwait > 0)
         // nie ma kogo budzic a czeka pisarz wiec zamykamy drzwi
         tree->change = 1;
+    tree->threads_below++;
     if ((err = pthread_mutex_unlock(&tree->lock)) != 0)
         return err;
 
@@ -139,6 +142,7 @@ static int writer_pp(Tree *tree) {
         tree->wwait--;
     }
     tree->wcount++;
+    tree->threads_below++;
     if ((err = pthread_mutex_unlock(&tree->lock)) != 0)
         return err;
 
@@ -151,6 +155,7 @@ static int writer_fp(Tree *tree) {
     if ((err = pthread_mutex_lock(&tree->lock)) != 0)
         syserr("writer_fp_unluck");//return err;
     tree->wcount--;
+    tree->threads_below--;
     if (tree->rwait > 0) {
         // budzimy czytelnika
         tree->change = 0;
@@ -166,36 +171,23 @@ static int writer_fp(Tree *tree) {
     return 0;
 }
 
-static Tree *find_node_p(Tree *tree, int *res, const char *path, bool is_reader) {
+static Tree *find_node_r(Tree *tree, const char *path) {
 
     assert(is_path_valid(path));
 
-    if (is_reader)
-        reader_pp(tree);
-    else
-        writer_pp(tree);
+    reader_pp(tree);
 
     Tree *child = find_child(tree, path);
-
-    if (child && child != tree)
-        tree->threads_below++;
 
     if (child == tree)
         return tree;
 
+    reader_fp(tree);
     if (!child) {
-        update_threads_below(tree);
-        if (is_reader)
-            reader_fp(tree);
-        else
-            writer_fp(tree);
+        update_threads_below_bounded(tree, NULL);
         return NULL;
     } else {
-        if (is_reader)
-            reader_fp(tree);
-        else
-            writer_fp(tree);
-        return find_node_p(child, res, split_path(path, NULL), is_reader);
+        return find_node_r(child, split_path(path, NULL));
     }
 }
 
@@ -239,6 +231,28 @@ static int update_threads_below(Tree *tree) {
     return update_threads_below(parent);
 }
 
+static void update_threads_below_bounded(Tree *tree, Tree *bound) {
+
+    if (!tree || (bound && tree == bound))
+        return;
+
+    int err;
+    if ((err = pthread_mutex_lock(&tree->lock)) != 0)
+        syserr("upd_threads_lock");//return err;
+
+    tree->threads_below--;
+    Tree *parent = tree->parent;
+
+    if (tree->threads_below == 0 && tree->wwait > 0)
+        if (pthread_cond_signal(&tree->writers) != 0)
+            syserr("upd_threads_signal");//return err;
+
+    if (pthread_mutex_unlock(&tree->lock) != 0)
+        syserr("upd_threads_unlock");//return err;
+
+    return update_threads_below_bounded(parent, bound);
+}
+
 static Tree *find_node(Tree *tree, const char *path) {
 
 
@@ -258,33 +272,20 @@ static Tree *find_node(Tree *tree, const char *path) {
     return NULL;
 }
 
-static int call_fp_and_return(Tree *tree, int res, bool is_reader) {
-//
-//    assert(tree);
-//    int pthread_res;
-//
-//    if (is_reader)
-//        return (pthread_res = reader_fp(tree)) != 0 ? syserr("pthread_err"),
-//            pthread_res : res;
-//    else
-//        return (pthread_res = writer_fp(tree)) != 0 ? syserr("pthread_err"),
-//            pthread_res : res;
-}
-
 char *tree_list(Tree *tree, const char *path) {
 
     if (!is_path_valid(path))
         return NULL;
 
     int err;
-    Tree *dest = find_node_p(tree, &err, path, true);
+    Tree *dest = find_node_r(tree, path);
 
     if (!dest)
         return NULL;
 
     char *res = make_map_contents_string(dest->content);
-    update_threads_below(dest->parent);
     reader_fp(dest);
+    update_threads_below(dest);
 
     return res;
 }
@@ -316,22 +317,20 @@ int tree_create(Tree *tree, const char *path) {
     int err = 0;
     char component[MAX_FOLDER_NAME_LENGTH + 1];
     char *path_to_par = make_path_to_parent(path, component);
-    Tree *parent = find_node_p(tree, &err, path_to_par, false);
+    Tree *parent = find_and_lock_dest_h(tree, path_to_par, false, NULL);
     free(path_to_par);
 
-    if (err != 0)
-        syserr("create");//return err;
     if (!parent)
         return ENOENT;
+    assert(parent->threads_below == 1);
     if (hmap_get(parent->content, component)) { // folder już istnieje
-        update_threads_below(parent->parent);
         writer_fp(parent);
+        update_threads_below_bounded(parent->parent, NULL);
         return EEXIST;
     }
     Tree *new = malloc(sizeof(Tree));
-
     if (!new)
-        exit(1);
+        syserr("allocation failed");
 
     if ((err = pthread_mutex_init(&new->lock, NULL)) != 0)
         syserr("lock init failed");
@@ -339,6 +338,7 @@ int tree_create(Tree *tree, const char *path) {
         syserr ("cond init failed");
     if ((err = pthread_cond_init(&new->writers, NULL)) != 0)
         syserr ("cond init failed");
+
     new->rcount = new->rwait = new->wcount = new->wwait = 0;
     new->change = 0;
     new->threads_below = 0;
@@ -347,9 +347,49 @@ int tree_create(Tree *tree, const char *path) {
 
     assert(hmap_insert(parent->content, component, new));
 
-    update_threads_below(parent->parent);
     writer_fp(parent);
+    update_threads_below(parent->parent);
     return 0;
+}
+
+Tree *find_and_lock_dest(Tree *tree, const char *dest) {
+
+    assert(is_path_valid(dest));
+    if (strlen(dest) == 1 && *dest == '/') {
+        writer_pp(tree);
+        return tree;
+    }
+    reader_pp(tree);
+    Tree *child = find_child(tree, dest);
+    reader_fp(tree);
+    if (!child) {
+        update_threads_below(tree);
+        return NULL;
+    }
+    return find_and_lock_dest(child, split_path(dest, NULL));
+}
+
+Tree *find_and_lock_dest_h(Tree *tree, const char *dest, bool lock_first, Tree *bound) {
+
+    assert(is_path_valid(dest));
+    if (strlen(dest) == 1 && *dest == '/') {
+        writer_pp(tree);
+        return tree;
+    }
+    if (lock_first)
+        reader_pp(tree);
+
+    Tree *child = find_child(tree, dest);
+    if (lock_first)
+        reader_fp(tree);
+    if (!child) {
+        if (lock_first)
+            update_threads_below_bounded(tree, bound);
+        else if (tree != bound)
+            update_threads_below_bounded(tree->parent, bound);
+        return NULL;
+    }
+    return find_and_lock_dest_h(child, split_path(dest, NULL), true, bound);
 }
 
 int tree_remove(Tree *tree, const char *path) {
@@ -359,36 +399,36 @@ int tree_remove(Tree *tree, const char *path) {
     if (path && strlen(path) == 1 && *path == '/')
         return EBUSY;
 
-    int err = 0;
+    int err;
     char component[MAX_FOLDER_NAME_LENGTH + 1];
     char *path_to_par = make_path_to_parent(path, component);
-    Tree *dest_par = find_node_p(tree, &err, path_to_par, false);
+
+    Tree *dest_par = find_and_lock_dest(tree, path_to_par);
     free(path_to_par);
 
     if (!dest_par)
         return ENOENT;
 
+    assert(dest_par->threads_below == 1);
     Tree *dest = hmap_get(dest_par->content, component);
 
     if (!dest) {
-        update_threads_below(dest_par->parent);
         writer_fp(dest_par);
+        update_threads_below_bounded(dest_par->parent, NULL);
         return ENOENT;
     }
-        //return call_fp_and_return(dest_par, ENOENT, false);
-    // wiemy, że nie ma w poddrzewie dest_par żadnych innych wątków
+
     if ((err = pthread_mutex_trylock(&dest->lock)) != 0)
-        fatal("remove dest trylock");//return err;
+        fatal("remove dest trylock");
 
     assert(dest->threads_below == 0);
 
     if (hmap_size(dest->content) > 0) {
         if ((err = pthread_mutex_unlock(&dest->lock)) != 0)
             fatal("remove dest unlock");//return err;
-        update_threads_below(dest_par->parent);
         writer_fp(dest_par);
+        update_threads_below_bounded(dest_par->parent, NULL);
         return ENOTEMPTY;
-        //return call_fp_and_return(dest_par, ENOTEMPTY, false);
     }
 
     assert(hmap_remove(dest_par->content, component));
@@ -398,8 +438,8 @@ int tree_remove(Tree *tree, const char *path) {
 
     tree_free(dest);
 
-    update_threads_below(dest_par->parent);
     writer_fp(dest_par);
+    update_threads_below_bounded(dest_par->parent, NULL);
     return 0;
 //    return call_fp_and_return(dest_par, 0, false);
 //    if ((err = writer_fp(tree)) != 0) {
@@ -470,10 +510,13 @@ char *make_path_to_lca(const char *path1, const char *path2) {
 
 static const char *normalize_path(const char *path_to_lca, const char *path_to_dest) {
 
-    assert(strlen(path_to_lca) < strlen(path_to_dest));
+    int *i;
+    if (strlen(path_to_lca) > strlen(path_to_dest)) {
+        fprintf(stderr, "normalize path\n"), free(i);
+    }
     return path_to_dest + strlen(path_to_lca) - 1;
 }
-
+// pamietac ze jezeli zrobilismy update threads below na nizszym wierzcholku to nie wywolywac na wyzzszym
 int tree_move(Tree *tree, const char *source, const char *target) {
 
     if (!is_path_valid(source) || !is_path_valid(target))
@@ -484,53 +527,101 @@ int tree_move(Tree *tree, const char *source, const char *target) {
         return EEXIST;
     if (is_parent_to(source, target))
         return -9; // TODO opisać błąd
-    if (!strcmp(source, target))
-        return 0;
-    //
-    int err = 0;
+
     char *path_to_lca = make_path_to_lca(source, target);
     assert(path_to_lca);
-    Tree *lca = find_node_p(tree, &err, path_to_lca, false);
+    Tree *lca = find_and_lock_dest_h(tree, path_to_lca, true, NULL);
     if (!lca)
         return ENOENT;
-    assert(lca->threads_below == 0);
-    // no threads below lca, lca blocked
-    Tree *src = find_node(lca, normalize_path(path_to_lca, source));
-    if (!src) {
-        update_threads_below(lca->parent);
+    assert(lca->threads_below == 1);
+    if (!strcmp(source, path_to_lca)) { // source == lca
         writer_fp(lca);
+        update_threads_below_bounded(lca->parent, NULL);
+        if (!strcmp(source, target)) { // source == target
+            return 0;
+        } else {
+            // target jest przodkiem source
+            return -9;
+        }
+    }
+    if (!strcmp(target, path_to_lca)) { // source jest przodkiem target
+        writer_fp(lca);
+        update_threads_below_bounded(lca->parent, NULL);
+        return EEXIST;
+    }
+    // no threads below lca, lca blocked
+    Tree *src = find_and_lock_dest_h(lca, normalize_path(path_to_lca, source), false, lca);
+    if (!src) {
+        writer_fp(lca);
+        update_threads_below_bounded(lca->parent, NULL);
         return ENOENT;
     }
     Tree *src_par = src->parent; // lca lub jego potomek
+    if (src_par != lca)
+        writer_pp(src_par);
+
     assert(src_par);
     Tree *trg_par;
     char trg_component[MAX_FOLDER_NAME_LENGTH + 1];
     char *path_to_trg_par = make_path_to_parent(target, trg_component);
-    if (!strcmp(path_to_trg_par, path_to_lca)) {
+    if (!strcmp(path_to_trg_par, path_to_lca)) { // target parent == lca
         trg_par = lca;
     } else {
-        trg_par = find_node(lca, normalize_path(path_to_lca, path_to_trg_par));
+        trg_par = find_and_lock_dest_h(lca, normalize_path(path_to_lca, path_to_trg_par), false, lca);
         if (!trg_par) {
-            update_threads_below(lca->parent);
+            free(path_to_trg_par);
+            writer_fp(src);
+            update_threads_below_bounded(src_par->parent, lca);
+            if (src_par != lca)
+                writer_fp(src_par);
+            update_threads_below_bounded(lca->parent, NULL);
             writer_fp(lca);
             return ENOENT;
+        } else if (src_par != lca) {
+            assert(src_par != trg_par); // wpp src_par == lca
+            update_threads_below_bounded(src_par->parent, lca);
+            update_threads_below_bounded(trg_par->parent, lca);
+            writer_fp(lca);
+            update_threads_below_bounded(lca->parent, NULL);
         }
     }
-    if (hmap_get(trg_par->content, trg_component)) {
+    free(path_to_trg_par);
+    bool target_exists = true;
+    if (!hmap_get(trg_par->content, trg_component)) {
+        // trg nie istnieje
+        target_exists = false;
+        char src_component[MAX_FOLDER_NAME_LENGTH + 1];
+        free(make_path_to_parent(source, src_component));
+        assert(hmap_remove(src_par->content, src_component));
+        assert(hmap_insert(trg_par->content, trg_component, src));
+        src->parent = trg_par;
         update_threads_below(lca->parent);
         writer_fp(lca);
-        free(path_to_trg_par);
-        return EEXIST;
     }
-    // trg nie istnieje
-    char src_component[MAX_FOLDER_NAME_LENGTH + 1];
-    free(make_path_to_parent(source, src_component));
-    assert(hmap_remove(src_par->content, src_component));
-    assert(hmap_insert(trg_par->content, trg_component, src));
-    src->parent = trg_par;
-    update_threads_below(lca->parent);
-    writer_fp(lca);
-    return 0;
+    writer_fp(src);
+    if (src_par == trg_par) {
+        assert(src_par == lca);
+        writer_fp(src_par);
+        update_threads_below_bounded(src_par->parent, NULL);
+    } else if (trg_par == lca) {
+        writer_fp(trg_par);
+        update_threads_below_bounded(trg_par->parent, src_par);
+        writer_fp(src_par);
+        update_threads_below_bounded(src_par->parent, NULL);
+    } else if (src_par == lca) {
+        writer_fp(trg_par);
+        update_threads_below_bounded(trg_par->parent, src_par);
+        writer_fp(src_par);
+        update_threads_below_bounded(src_par->parent, NULL);
+    } else {
+        writer_fp(src_par);
+        writer_fp(trg_par);
+    }
+    if (target_exists)
+        return 0;
+    else
+        return EEXIST;
+}
     //
 //    char src_component[MAX_FOLDER_NAME_LENGTH + 1];
 //    char *p_to_src_par = make_path_to_parent(source, src_component);
@@ -617,4 +708,4 @@ int tree_move(Tree *tree, const char *source, const char *target) {
 //    strcpy(src->f_name, trg_component);
 //    assert(hmap_insert(trg_par->content, src->f_name, src));
 //    return 0;
-}
+//}
