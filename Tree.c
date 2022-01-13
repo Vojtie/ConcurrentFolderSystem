@@ -20,14 +20,12 @@ struct Tree {
     Tree *parent;
 };
 
-static int update_threads_below(Tree *tree);
 static int reader_pp(Tree *tree);
 static int reader_fp(Tree *tree);
 static int writer_pp(Tree *tree);
 static int writer_fp(Tree *tree);
+static Tree *find_node_r(Tree *tree, const char *path);
 static Tree *find_child(Tree *tree, const char *path);
-static Tree *find_node_p(Tree *tree, int *res, const char *path, bool is_reader);
-static Tree *find_node(Tree *tree, const char *path);
 static Tree *find_and_lock_dest_h(Tree *tree, const char *dest, bool lock_first, Tree *bound);
 static void update_threads_below_bounded(Tree *tree, Tree *bound);
 
@@ -209,28 +207,6 @@ static Tree *find_child(Tree *tree, const char *path) {
     return NULL;
 }
 
-static int update_threads_below(Tree *tree) {
-
-    if (!tree)
-        return 0;
-
-    int err;
-    if ((err = pthread_mutex_lock(&tree->lock)) != 0)
-        syserr("upd_threads_lock");//return err;
-
-    tree->threads_below--;
-    Tree *parent = tree->parent;
-
-    if (tree->threads_below == 0 && tree->wwait > 0)
-        if (pthread_cond_signal(&tree->writers) != 0)
-            syserr("upd_threads_signal");//return err;
-
-    if (pthread_mutex_unlock(&tree->lock) != 0)
-        syserr("upd_threads_unlock");//return err;
-
-    return update_threads_below(parent);
-}
-
 static void update_threads_below_bounded(Tree *tree, Tree *bound) {
 
     if (!tree || (bound && tree == bound))
@@ -253,25 +229,6 @@ static void update_threads_below_bounded(Tree *tree, Tree *bound) {
     return update_threads_below_bounded(parent, bound);
 }
 
-static Tree *find_node(Tree *tree, const char *path) {
-
-
-    if (path && strlen(path) == 1 && *path == '/')
-        return tree;
-
-    HashMapIterator it = hmap_iterator(tree->content);
-    const char *key;
-    void *value;
-    char component[MAX_FOLDER_NAME_LENGTH + 1];
-    path = split_path(path, component); assert(path);
-
-    while (hmap_next(tree->content, &it, &key, &value))
-        if (!strcmp(component, key))
-            return find_node((Tree *) value, path);
-
-    return NULL;
-}
-
 char *tree_list(Tree *tree, const char *path) {
 
     if (!is_path_valid(path))
@@ -285,26 +242,9 @@ char *tree_list(Tree *tree, const char *path) {
 
     char *res = make_map_contents_string(dest->content);
     reader_fp(dest);
-    update_threads_below(dest);
+    update_threads_below_bounded(dest, NULL);
 
     return res;
-}
-void list() {
-//    if (reader_pp(tree) != 0)
-//        syserr("pthread err");
-//
-//    if (!is_path_valid(path))
-//        return NULL;
-//
-//    Tree *dest = find_node(tree, path);
-//    if (!dest)
-//        return NULL;
-//    char *res = make_map_contents_string(dest->content);
-//
-//    if (reader_fp(tree) != 0)
-//        syserr("pthread err");
-//
-//    return res;
 }
 
 int tree_create(Tree *tree, const char *path) {
@@ -317,7 +257,7 @@ int tree_create(Tree *tree, const char *path) {
     int err = 0;
     char component[MAX_FOLDER_NAME_LENGTH + 1];
     char *path_to_par = make_path_to_parent(path, component);
-    Tree *parent = find_and_lock_dest_h(tree, path_to_par, false, NULL);
+    Tree *parent = find_and_lock_dest_h(tree, path_to_par, true, NULL);
     free(path_to_par);
 
     if (!parent)
@@ -348,25 +288,8 @@ int tree_create(Tree *tree, const char *path) {
     assert(hmap_insert(parent->content, component, new));
 
     writer_fp(parent);
-    update_threads_below(parent->parent);
+    update_threads_below_bounded(parent->parent, NULL);
     return 0;
-}
-
-Tree *find_and_lock_dest(Tree *tree, const char *dest) {
-
-    assert(is_path_valid(dest));
-    if (strlen(dest) == 1 && *dest == '/') {
-        writer_pp(tree);
-        return tree;
-    }
-    reader_pp(tree);
-    Tree *child = find_child(tree, dest);
-    reader_fp(tree);
-    if (!child) {
-        update_threads_below(tree);
-        return NULL;
-    }
-    return find_and_lock_dest(child, split_path(dest, NULL));
 }
 
 Tree *find_and_lock_dest_h(Tree *tree, const char *dest, bool lock_first, Tree *bound) {
@@ -403,7 +326,7 @@ int tree_remove(Tree *tree, const char *path) {
     char component[MAX_FOLDER_NAME_LENGTH + 1];
     char *path_to_par = make_path_to_parent(path, component);
 
-    Tree *dest_par = find_and_lock_dest(tree, path_to_par);
+    Tree *dest_par = find_and_lock_dest_h(tree, path_to_par, true, NULL);
     free(path_to_par);
 
     if (!dest_par)
@@ -557,8 +480,10 @@ int tree_move(Tree *tree, const char *source, const char *target) {
         return ENOENT;
     }
     Tree *src_par = src->parent; // lca lub jego potomek
-    if (src_par != lca)
+    if (src_par != lca) {
+        src_par->threads_below--;
         writer_pp(src_par);
+    }
 
     assert(src_par);
     Tree *trg_par;
@@ -595,7 +520,7 @@ int tree_move(Tree *tree, const char *source, const char *target) {
         assert(hmap_remove(src_par->content, src_component));
         assert(hmap_insert(trg_par->content, trg_component, src));
         src->parent = trg_par;
-        update_threads_below(lca->parent);
+        update_threads_below_bounded(lca->parent, NULL);
         writer_fp(lca);
     }
     writer_fp(src);
@@ -617,7 +542,7 @@ int tree_move(Tree *tree, const char *source, const char *target) {
         writer_fp(src_par);
         writer_fp(trg_par);
     }
-    if (target_exists)
+    if (!target_exists)
         return 0;
     else
         return EEXIST;
