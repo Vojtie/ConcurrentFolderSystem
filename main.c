@@ -27,6 +27,7 @@ int main(void)
 //    printf("%s\n", make_path_to_lca(p1, p2));
     Tree *t = tree_new();
     tree_create(t, "/a/");
+    //tree_move(t, "/a/", "/b/");
     tree_create(t, "/b/");
     tree_create(t, "/a/b/");
     tree_create(t, "/a/b/c/");
