@@ -458,16 +458,18 @@ int tree_move(Tree *tree, const char *source, const char *target) {
     assert(path_to_lca);
     Tree *lca = find_node_w(tree, path_to_lca, true, NULL);
     if (!lca)
-        return ENOENT;
+        return free(path_to_lca), ENOENT;
     assert(lca->no_threads == 1);
     if (!strcmp(source, path_to_lca)) { // source == lca
         writer_fp(lca);
         update_no_threads(lca->parent, NULL);
         if (!strcmp(source, target)) { // source == target
+            free(path_to_lca);
             return 0;
         }
     }
     if (!strcmp(target, path_to_lca)) { // source jest przodkiem target
+        free(path_to_lca);
         writer_fp(lca);
         update_no_threads(lca->parent, NULL);
         return EEXIST;
@@ -483,11 +485,13 @@ int tree_move(Tree *tree, const char *source, const char *target) {
         writer_fp(lca);
         update_no_threads(lca->parent, NULL);
         free(path_to_src_par);
+        free(path_to_lca);
         return ENOENT;
     }
     Tree *src = find_child(src_par, cut_path(path_to_src_par, source));
     if (!src) {
         free(path_to_src_par);
+        free(path_to_lca);
         if (src_par != lca) {
             writer_fp(src_par);
             update_no_threads(src_par->parent, lca);
@@ -507,6 +511,7 @@ int tree_move(Tree *tree, const char *source, const char *target) {
         if (!trg_par) {
             free(path_to_src_par);
             free(path_to_trg_par);
+            free(path_to_lca);
             writer_fp(src);
             update_no_threads(src_par->parent, lca);
             if (src_par != lca)
@@ -566,6 +571,7 @@ int tree_move(Tree *tree, const char *source, const char *target) {
     }
     free(path_to_src_par);
     free(path_to_trg_par);
+    free(path_to_lca);
     if (!target_exists)
         return 0;
     else
