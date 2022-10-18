@@ -1,4 +1,4 @@
-# FinalTaskConcurrentProgramming
+# Concurrent Folder System
 Final task solution for Concurrent Programming classes at Uni.  
 Implementation of a part of a file system - concurrent data structure representing tree of folders.  
 It's using the Readers-writers pattern where create, move and remove opertaions are implemented as writers and list
